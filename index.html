@@ -7,7 +7,7 @@ import {
   LucideFileCode,
   LucideCopy,
   LucideCheck,
-  LucideX,
+  LucideX, 
   LucideCpu,
   LucideSettings,
   LucideTrash2,
@@ -106,11 +106,11 @@ export default function App() {
           setScripts(prev => prev.map(s => s.id === activeScriptId ? { ...s, ...parsed.scriptUpdate } : s));
           botMsg.content = `✨ Atualizei o script "${currentScript.name}": ${parsed.explanation}`;
         } else {
-          const newScript = { ...parsed.scriptUpdate, id: `script-${Date.now()}` };
+          const newId = `script-${Date.now()}`;
+          const newScript = { ...parsed.scriptUpdate, id: newId };
           setScripts(prev => [newScript, ...prev]);
-          setActiveScriptId(newScript.id);
+          setActiveScriptId(newId);
         }
-        botMsg.scriptId = activeScriptId || `script-${Date.now()}`;
         setIsEditorOpen(true);
       }
 
