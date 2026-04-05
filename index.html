@@ -1,299 +1,400 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { 
-  LucideSend, 
-  LucideCode2, 
-  LucideTerminal,
-  LucideChevronRight,
-  LucideFileCode,
-  LucideCopy,
-  LucideCheck,
-  LucideX, 
-  LucideCpu,
-  LucideSettings,
-  LucideTrash2,
-  LucideZap,
-  LucidePlusCircle
-} from 'lucide-react';
-
-// --- CONFIGURAÇÃO DA API ---
-const apiKey = ""; 
-const MODEL_NAME = "gemini-2.5-flash-preview-09-2025";
-const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent?key=${apiKey}`;
-
-const CodeView = ({ code }) => (
-  <pre className="font-mono text-sm leading-relaxed text-blue-100 whitespace-pre-wrap select-text">
-    <code>{code}</code>
-    <span className="animate-pulse bg-blue-500 w-1.5 h-4 inline-block ml-1"></span>
-  </pre>
-);
-
-export default function App() {
-  const [messages, setMessages] = useState([]);
-  const [scripts, setScripts] = useState([]);
-  const [input, setInput] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const [activeScriptId, setActiveScriptId] = useState(null);
-  const [isEditorOpen, setIsEditorOpen] = useState(false);
-  const [copied, setCopied] = useState(false);
-  
-  const chatEndRef = useRef(null);
-
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, isLoading]);
-
-  const fetchAIResponse = async (prompt, existingCode = null) => {
-    const mode = existingCode ? "UPDATE_EXISTING" : "CREATE_NEW";
-    
-    const systemPrompt = `Você é o YO CODE BLOX, expert em Roblox Luau.
-    MODO ATUAL: ${mode}
-    
-    ${existingCode ? `CÓDIGO ATUAL PARA EDITAR:\n${existingCode}` : ""}
-    
-    Se MODO for UPDATE_EXISTING, você deve REESCREVER o código completo incluindo a nova funcionalidade solicitada, mantendo o que já funcionava.
-    
-    Responda OBRIGATORIAMENTE em JSON: 
-    { 
-      "explanation": "explicação do que foi adicionado ou criado", 
-      "scriptUpdate": { 
-        "name": "Nome do Script", 
-        "location": "Localização", 
-        "code": "-- código luau final completo aqui" 
-      } 
-    }`;
-    
-    const payload = {
-      contents: [{ parts: [{ text: prompt }] }],
-      systemInstruction: { parts: [{ text: systemPrompt }] },
-      generationConfig: { 
-        responseMimeType: "application/json",
-        temperature: 0.7
-      }
-    };
-
-    const response = await fetch(API_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-
-    if (!response.ok) throw new Error("Erro na comunicação com o motor de IA.");
-    return await response.json();
-  };
-
-  const handleSendMessage = async (e) => {
-    e.preventDefault();
-    if (!input.trim() || isLoading) return;
-
-    const userPrompt = input.trim();
-    setInput('');
-    setIsLoading(true);
-
-    const userMsg = { role: 'user', content: userPrompt, id: Date.now() };
-    setMessages(prev => [...prev, userMsg]);
-
-    try {
-      const currentScript = scripts.find(s => s.id === activeScriptId);
-      const result = await fetchAIResponse(userPrompt, currentScript?.code);
-      
-      const rawText = result.candidates?.[0]?.content?.parts?.[0]?.text;
-      const parsed = JSON.parse(rawText);
-      
-      let botMsg = { role: 'bot', content: parsed.explanation, id: Date.now() + 1 };
-
-      if (parsed.scriptUpdate) {
-        if (currentScript) {
-          setScripts(prev => prev.map(s => s.id === activeScriptId ? { ...s, ...parsed.scriptUpdate } : s));
-          botMsg.content = `✨ Atualizei o script "${currentScript.name}": ${parsed.explanation}`;
-        } else {
-          const newId = `script-${Date.now()}`;
-          const newScript = { ...parsed.scriptUpdate, id: newId };
-          setScripts(prev => [newScript, ...prev]);
-          setActiveScriptId(newId);
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YOUNIVERSO - Control Hub</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;700&family=Inter:wght@300;400;600;900&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-black: #050505;
+            --roblox-blue: #00A2FF;
+            --border-subtle: rgba(255, 255, 255, 0.05);
         }
-        setIsEditorOpen(true);
-      }
+        body {
+            background-color: var(--bg-black);
+            color: #ffffff;
+            font-family: 'Inter', sans-serif;
+            overflow: hidden;
+            letter-spacing: -0.02em;
+        }
+        .mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Mensagens */
+        .message-user { background: #ffffff; color: #000000; border-radius: 18px 18px 4px 18px; }
+        .message-ai { background: rgba(255, 255, 255, 0.03); border: 1px solid var(--border-subtle); border-radius: 18px 18px 18px 4px; }
 
-      setMessages(prev => [...prev, botMsg]);
+        /* Painel Lateral de Script */
+        #scriptEditor {
+            position: fixed;
+            top: 0;
+            right: -100%;
+            width: 450px;
+            height: 100%;
+            background: #080808;
+            border-left: 1px solid rgba(255,255,255,0.1);
+            z-index: 150;
+            transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+            display: flex;
+            flex-direction: column;
+        }
+        #scriptEditor.active { right: 0; }
 
-    } catch (err) {
-      setMessages(prev => [...prev, { 
-        role: 'bot', 
-        content: `❌ Erro: ${err.message}`, 
-        id: Date.now() + 2 
-      }]);
-    } finally {
-      setIsLoading(false);
-    }
-  };
+        /* Menu de Opções (+) */
+        #plusMenu {
+            display: none;
+            position: absolute;
+            bottom: 100%;
+            left: 0;
+            margin-bottom: 12px;
+            background: #0a0a0a;
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 16px;
+            width: 220px;
+            overflow: hidden;
+            z-index: 210;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+        }
+        .menu-item {
+            padding: 14px 20px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 10px;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: rgba(255,255,255,0.5);
+            transition: all 0.2s;
+            cursor: pointer;
+        }
+        .menu-item:hover { background: rgba(255,255,255,0.05); color: #ffffff; }
+        .menu-item.active { color: var(--roblox-blue); background: rgba(0, 162, 255, 0.05); }
 
-  const activeScript = scripts.find(s => s.id === activeScriptId);
+        /* Modal de Customização */
+        #customModal {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.9);
+            backdrop-filter: blur(10px);
+            z-index: 300;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
 
-  return (
-    <div className="flex h-screen bg-[#050505] text-zinc-300 overflow-hidden font-sans select-none">
-      
-      {/* Sidebar */}
-      <aside className="w-80 border-r border-white/5 bg-[#080808] hidden lg:flex flex-col">
-        <div className="p-10 border-b border-white/5">
-          <h1 className="font-black italic text-2xl text-white tracking-tighter flex items-center gap-2">
-            YO <span className="text-blue-600 font-normal">/</span> BLOX
-          </h1>
-          <p className="text-[8px] font-black text-zinc-600 uppercase tracking-[0.4em] mt-1">UPDATE ENGINE v2.7</p>
-        </div>
-
-        <div className="flex-1 p-6 space-y-2 overflow-y-auto custom-scrollbar">
-          <div className="flex justify-between items-center mb-6 px-2">
-            <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest flex items-center gap-2">
-              <LucideZap size={12} className="text-blue-500" /> Scripts Ativos
-            </p>
-            <button 
-              onClick={() => { setActiveScriptId(null); setIsEditorOpen(false); }} 
-              className="text-[9px] font-bold text-blue-500 hover:underline"
-            >
-              Novo Script
-            </button>
-          </div>
-          
-          {scripts.map(s => (
-            <button 
-              key={s.id} 
-              onClick={() => { setActiveScriptId(s.id); setIsEditorOpen(true); }} 
-              className={`w-full text-left p-4 rounded-2xl text-[11px] font-black flex items-center gap-3 transition-all border ${activeScriptId === s.id ? 'bg-blue-600 border-blue-400 text-white' : 'bg-white/5 border-transparent text-zinc-400'}`}
-            >
-              <LucideFileCode size={16} /> 
-              <div className="truncate">
-                <p className="uppercase">{s.name}</p>
-                <p className={`text-[8px] opacity-60`}>{s.location}</p>
-              </div>
-            </button>
-          ))}
-        </div>
-      </aside>
-
-      {/* Main Chat Area */}
-      <main className={`flex-1 flex flex-col relative transition-all duration-500 ${isEditorOpen ? 'xl:mr-[45%]' : ''}`}>
-        <header className="h-20 border-b border-white/5 flex items-center px-10 justify-between bg-[#050505]/80 backdrop-blur-2xl z-30">
-          <div className="flex items-center gap-4">
-             {activeScriptId ? (
-               <div className="flex items-center gap-2 px-3 py-1 bg-blue-500/10 border border-blue-500/20 rounded-full">
-                 <LucidePlusCircle size={12} className="text-blue-500" />
-                 <span className="text-[9px] font-black text-blue-500 uppercase">Editando: {activeScript?.name}</span>
-               </div>
-             ) : (
-               <span className="text-[10px] font-black tracking-[0.2em] uppercase text-zinc-500">Modo: Criação Livre</span>
-             )}
-          </div>
-          <button 
-            onClick={() => setIsEditorOpen(!isEditorOpen)} 
-            className="text-[10px] font-black bg-white text-black px-6 py-2.5 rounded-xl uppercase hover:bg-blue-600 hover:text-white transition-all"
-          >
-            {isEditorOpen ? 'Fechar Editor' : 'Abrir Editor'}
-          </button>
-        </header>
-
-        <div className="flex-1 overflow-y-auto p-10 space-y-10 custom-scrollbar">
-          {messages.length === 0 && (
-            <div className="h-full flex flex-col items-center justify-center text-center opacity-20">
-              <LucideCpu size={64} className="mb-4" />
-              <p className="text-xs uppercase tracking-widest font-black">Sistema Pronto para Codificação</p>
-            </div>
-          )}
-          {messages.map((m) => (
-            <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'} animate-in fade-in slide-in-from-bottom-4`}>
-              <div className={`max-w-[85%] p-8 rounded-[2.5rem] text-sm shadow-2xl ${m.role === 'user' ? 'bg-blue-600 text-white font-medium' : 'bg-[#0e0e0f] border border-white/5 text-zinc-400'}`}>
-                <p className="leading-relaxed whitespace-pre-wrap select-text">{m.content}</p>
-              </div>
-            </div>
-          ))}
-          {isLoading && (
-            <div className="flex items-center gap-3 p-8">
-              <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-              <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-              <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-              <span className="text-[10px] font-black uppercase text-blue-500/50 ml-2 tracking-widest">Sincronizando Lógica...</span>
-            </div>
-          )}
-          <div ref={chatEndRef} />
-        </div>
-
-        <footer className="p-10">
-          <form onSubmit={handleSendMessage} className="max-w-4xl mx-auto relative">
-            <input 
-              value={input} 
-              onChange={e => setInput(e.target.value)} 
-              placeholder={activeScriptId ? "Descreva o que adicionar neste script..." : "Crie um novo sistema..."} 
-              className="w-full bg-[#0d0d0e] border border-white/10 rounded-[2rem] px-8 py-6 pr-20 text-white text-sm outline-none focus:border-blue-600/50 transition-all placeholder:text-zinc-700" 
-            />
-            <button 
-              type="submit" 
-              disabled={isLoading || !input.trim()}
-              className="absolute right-3 top-1/2 -translate-y-1/2 w-12 h-12 bg-blue-600 text-white rounded-full flex items-center justify-center hover:scale-105 active:scale-95 transition-all disabled:opacity-50 disabled:hover:scale-100"
-            >
-              <LucideSend size={20} />
-            </button>
-          </form>
-        </footer>
-      </main>
-
-      {/* Side Editor Panel */}
-      {isEditorOpen && (
-        <aside className="fixed right-0 top-0 bottom-0 w-full xl:w-[45%] bg-[#030303] border-l border-white/10 z-[100] flex flex-col shadow-2xl animate-in slide-in-from-right duration-300">
-          <header className="h-20 border-b border-white/10 flex items-center justify-between px-10 bg-[#080808]">
-            <div className="flex items-center gap-4">
-              <LucideFileCode className="text-blue-500" size={20} />
-              <p className="text-[11px] font-black text-white uppercase">{activeScript?.name || 'Sem Script'}</p>
-            </div>
-            <button onClick={() => setIsEditorOpen(false)} className="p-2 hover:bg-white/5 rounded-xl transition-colors">
-              <LucideX size={18} />
-            </button>
-          </header>
-          
-          <div className="flex-1 overflow-auto p-10 custom-scrollbar bg-[#030303]">
-            {activeScript ? (
-              <div className="space-y-6">
-                <div className="flex gap-4">
-                  <button 
-                    onClick={() => { 
-                      navigator.clipboard.writeText(activeScript.code);
-                      setCopied(true); 
-                      setTimeout(() => setCopied(false), 2000); 
-                    }} 
-                    className="flex-1 bg-blue-600 text-white py-4 rounded-2xl font-black text-[10px] uppercase flex items-center justify-center gap-2 hover:bg-blue-500 transition-colors"
-                  >
-                    {copied ? <LucideCheck size={14}/> : <LucideCopy size={14}/>} 
-                    {copied ? 'Copiado!' : 'Copiar Código'}
-                  </button>
-                  <button className="p-4 bg-white/5 rounded-2xl text-zinc-400 hover:text-red-500 transition-colors border border-white/5">
-                    <LucideTrash2 size={18} />
-                  </button>
-                </div>
-                
-                <div className="p-8 bg-black/60 rounded-3xl border border-white/5 shadow-inner">
-                  <div className="flex items-center gap-2 mb-4 opacity-30">
-                    <div className="w-2 h-2 rounded-full bg-red-500" />
-                    <div className="w-2 h-2 rounded-full bg-yellow-500" />
-                    <div className="w-2 h-2 rounded-full bg-green-500" />
-                    <span className="text-[9px] font-mono ml-2">source.lua</span>
-                  </div>
-                  <CodeView code={activeScript.code} />
-                </div>
-              </div>
-            ) : (
-              <div className="h-full flex flex-col items-center justify-center text-center text-zinc-600">
-                <LucideCode2 size={48} className="mb-4 opacity-20" />
-                <p className="text-[10px] font-black uppercase tracking-widest">Selecione um script para visualizar</p>
-              </div>
-            )}
-          </div>
-        </aside>
-      )}
-
-      <style>{`
+        .main-container { max-width: 800px; margin: 0 auto; width: 100%; }
         .custom-scrollbar::-webkit-scrollbar { width: 4px; }
         .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: #1a1a1b; border-radius: 10px; }
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #252526; }
-      `}</style>
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.1); border-radius: 10px; }
+
+        .luau-btn {
+            background: linear-gradient(135deg, #00A2FF 0%, #0072B1 100%);
+            color: white;
+            font-weight: 900;
+            text-transform: uppercase;
+            font-size: 10px;
+            letter-spacing: 1px;
+            padding: 10px 15px;
+            border-radius: 8px;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            transition: transform 0.2s;
+        }
+
+        input:focus, textarea:focus { outline: none; border-color: var(--roblox-blue) !important; }
+    </style>
+</head>
+<body class="flex h-screen w-full bg-black">
+
+    <!-- Editor Lateral de Scripts -->
+    <div id="scriptEditor">
+        <div class="p-6 border-b border-white/5 flex items-center justify-between bg-white/[0.02]">
+            <div class="flex items-center gap-3">
+                <i class="fas fa-file-code text-blue-400"></i>
+                <div class="flex flex-col">
+                    <span id="scriptPath" class="text-[8px] uppercase font-black text-gray-500 tracking-widest">LOCAL: SERVER_STORAGE</span>
+                    <h3 id="scriptTitle" class="text-xs font-bold uppercase tracking-widest">MainModule.lua</h3>
+                </div>
+            </div>
+            <button onclick="toggleEditor()" class="text-white/30 hover:text-white"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="flex-grow overflow-y-auto p-6 custom-scrollbar bg-[#020202]">
+            <div class="flex justify-between items-center mb-4">
+                <span class="text-[9px] font-bold text-white/20 mono uppercase">-- SOURCE CODE (LUAU)</span>
+                <button onclick="copyCurrentScript()" class="text-[10px] font-black uppercase text-blue-400 hover:text-white transition-colors flex items-center gap-2">
+                    <i class="fas fa-copy"></i> Copy Code
+                </button>
+            </div>
+            <pre id="editorCode" class="text-[12px] mono text-blue-100/80 leading-relaxed break-words whitespace-pre-wrap"></pre>
+        </div>
     </div>
-  );
-}
+
+    <!-- Modal de Customização -->
+    <div id="customModal">
+        <div class="bg-[#0a0a0a] border border-white/10 p-8 rounded-3xl w-full max-w-md shadow-2xl">
+            <h2 class="text-xs font-black uppercase tracking-[0.4em] text-white/40 mb-6">Personalizar YO</h2>
+            <textarea id="botInstruction" rows="5" class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm mono text-white resize-none mb-6" placeholder="Defina a personalidade do robô..."></textarea>
+            <button onclick="closeCustom()" class="w-full bg-white text-black py-4 rounded-xl font-black text-[10px] uppercase tracking-widest hover:opacity-90">
+                SALVAR E FECHAR
+            </button>
+        </div>
+    </div>
+
+    <main class="flex-grow flex flex-col h-full bg-black relative">
+        <header class="h-16 border-b border-white/5 px-8 flex items-center justify-between">
+            <div class="flex flex-col">
+                <span class="text-sm font-black tracking-widest uppercase text-white">YOUNIVERSO</span>
+                <span id="modeStatus" class="text-[8px] text-gray-500 uppercase font-black tracking-[0.2em]">Conversa Normal</span>
+            </div>
+            <div class="flex items-center gap-4">
+                <div id="luauIndicator" class="hidden w-2 h-2 rounded-full bg-blue-500 shadow-[0_0_10px_rgba(0,162,255,0.5)]"></div>
+                <div class="text-[8px] text-white/20 uppercase font-black tracking-widest">v2.5 System</div>
+            </div>
+        </header>
+
+        <!-- Área de Chat -->
+        <section id="chatContainer" class="flex-grow overflow-y-auto custom-scrollbar">
+            <div class="main-container px-6 py-10 space-y-8" id="chatArea">
+                <div class="py-12 text-center opacity-20">
+                    <i class="fas fa-terminal text-2xl mb-4"></i>
+                    <p class="text-[9px] uppercase tracking-[0.5em] font-black">Sistema Operacional YO Iniciado</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Input de Chat -->
+        <footer class="p-6 md:p-10">
+            <div class="main-container relative">
+                
+                <!-- Menu flutuante do + -->
+                <div id="plusMenu">
+                    <div class="menu-item" onclick="openCustom()">
+                        <i class="fas fa-sliders"></i> Personalizar
+                    </div>
+                    <div class="menu-item" id="optChat" onclick="setMode('chat')">
+                        <i class="fas fa-comment"></i> Modo Conversa
+                    </div>
+                    <div class="menu-item" id="optRoblox" onclick="setMode('roblox')">
+                        <i class="fas fa-gamepad"></i> Modo Roblox
+                    </div>
+                </div>
+
+                <form id="chatForm" class="relative group">
+                    <button type="button" onclick="togglePlusMenu()" id="plusBtn" class="absolute left-4 top-1/2 -translate-y-1/2 w-10 h-10 flex items-center justify-center rounded-full bg-white/5 border border-white/10 hover:bg-white/10 text-white/40 hover:text-white transition-all z-10">
+                        <i class="fas fa-plus"></i>
+                    </button>
+                    
+                    <input type="text" id="userInput" autocomplete="off" placeholder="Digite sua mensagem..." class="w-full bg-white/[0.03] border border-white/10 rounded-2xl px-16 py-5 outline-none transition-all text-sm mono placeholder:text-gray-700 text-white">
+                    
+                    <button type="submit" class="absolute right-4 top-1/2 -translate-y-1/2 w-10 h-10 flex items-center justify-center text-white/20 hover:text-white transition-all">
+                        <i class="fas fa-paper-plane"></i>
+                    </button>
+                </form>
+            </div>
+        </footer>
+    </main>
+
+    <script type="module">
+        const apiKey = ""; 
+
+        const chatArea = document.getElementById('chatArea');
+        const userInput = document.getElementById('userInput');
+        const plusMenu = document.getElementById('plusMenu');
+        const modeStatus = document.getElementById('modeStatus');
+        const luauIndicator = document.getElementById('luauIndicator');
+        const botInstruction = document.getElementById('botInstruction');
+        
+        const editor = document.getElementById('scriptEditor');
+        const editorCode = document.getElementById('editorCode');
+        const scriptTitle = document.getElementById('scriptTitle');
+        const scriptPath = document.getElementById('scriptPath');
+
+        // ESTADO GLOBAL
+        let currentMode = 'chat'; // 'chat' ou 'roblox'
+        let activeScript = { name: "MainModule.lua", path: "ServerScriptService", code: "" };
+        
+        botInstruction.value = "Você é o YO, uma IA de chat minimalista e moderna. Suas respostas são diretas.";
+
+        window.togglePlusMenu = () => {
+            plusMenu.style.display = plusMenu.style.display === 'block' ? 'none' : 'block';
+        };
+
+        window.openCustom = () => {
+            document.getElementById('customModal').style.display = 'flex';
+            plusMenu.style.display = 'none';
+        };
+
+        window.closeCustom = () => {
+            document.getElementById('customModal').style.display = 'none';
+        };
+
+        window.setMode = (mode) => {
+            currentMode = mode;
+            plusMenu.style.display = 'none';
+            
+            // UI Updates
+            document.getElementById('optChat').classList.toggle('active', mode === 'chat');
+            document.getElementById('optRoblox').classList.toggle('active', mode === 'roblox');
+            
+            if(mode === 'roblox') {
+                modeStatus.innerText = "Especialista Luau Ativado";
+                modeStatus.classList.replace('text-gray-500', 'text-blue-500');
+                luauIndicator.classList.remove('hidden');
+                userInput.placeholder = "O que vamos programar no Roblox?";
+            } else {
+                modeStatus.innerText = "Conversa Normal";
+                modeStatus.classList.replace('text-blue-500', 'text-gray-500');
+                luauIndicator.classList.add('hidden');
+                userInput.placeholder = "Digite sua mensagem...";
+                activeScript.code = ""; // Reseta script ao sair do modo roblox
+            }
+        };
+
+        window.toggleEditor = () => editor.classList.toggle('active');
+
+        window.openEditor = (name, path, code) => {
+            activeScript.name = name;
+            activeScript.path = path;
+            activeScript.code = code;
+            scriptTitle.innerText = name;
+            scriptPath.innerText = `LOCAL: ${path}`;
+            editorCode.innerText = code;
+            editor.classList.add('active');
+        };
+
+        window.copyCurrentScript = () => {
+            const text = editorCode.innerText;
+            navigator.clipboard.writeText(text).then(() => {
+                // Feedback visual simples pode ser adicionado aqui
+            }).catch(() => {
+                const temp = document.createElement('textarea');
+                temp.value = text;
+                document.body.appendChild(temp);
+                temp.select();
+                document.execCommand('copy');
+                document.body.removeChild(temp);
+            });
+        };
+
+        async function sendMessage(text) {
+            appendMessage(text, 'user');
+            
+            const tNode = document.createElement('div');
+            tNode.className = "flex justify-start animate-pulse";
+            tNode.innerHTML = `<div class="message-ai px-6 py-4 text-[9px] mono uppercase tracking-widest text-white/20">PROCESSANDO...</div>`;
+            chatArea.appendChild(tNode);
+            chatArea.parentElement.scrollTo({ top: chatArea.parentElement.scrollHeight, behavior: 'smooth' });
+
+            const isLuau = currentMode === 'roblox';
+            
+            // PROMPT DINÂMICO
+            const systemPrompt = isLuau 
+                ? `Você é um Especialista Magnífico em Luau (Roblox). 
+                   Crie códigos otimizados.
+                   SE houver um script já existente (Contexto abaixo), NÃO o apague. Apenas adicione ou remova as linhas conforme solicitado.
+                   Retorne APENAS um JSON válido no formato: { "scriptName": "nome", "path": "local", "code": "codigo_completo_atualizado", "explanation": "fala_curta" }`
+                : botInstruction.value;
+
+            try {
+                const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contents: [{ parts: [{ text: isLuau ? `Script Atual:\n${activeScript.code}\n\nPedido do Usuário: ${text}` : text }] }],
+                        systemInstruction: { parts: [{ text: systemPrompt }] },
+                        generationConfig: isLuau ? { responseMimeType: "application/json" } : {}
+                    })
+                });
+                
+                const data = await response.json();
+                tNode.remove();
+
+                if (isLuau) {
+                    const contentText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+                    if (contentText) {
+                        try {
+                            const result = JSON.parse(contentText);
+                            appendAiLuauMessage(result);
+                        } catch (jsonErr) {
+                            appendMessage("Erro ao processar os dados do script. Tente novamente.", 'ai');
+                        }
+                    } else {
+                        appendMessage("Resposta vazia da IA.", 'ai');
+                    }
+                } else {
+                    const aiText = data.candidates?.[0]?.content?.parts?.[0]?.text || "Sem resposta.";
+                    appendMessage(aiText, 'ai');
+                }
+
+            } catch (e) {
+                if (tNode) tNode.remove();
+                appendMessage("FALHA NO LINK NEURAL: Verifique sua conexão.", 'ai');
+                console.error(e);
+            }
+        }
+
+        function appendMessage(text, side) {
+            const wrap = document.createElement('div');
+            wrap.className = side === 'user' ? "flex justify-end w-full" : "flex justify-start w-full";
+            wrap.innerHTML = `
+                <div class="${side === 'user' ? 'message-user' : 'message-ai'} px-6 py-4 max-w-[85%]">
+                    <div class="text-[13px] leading-relaxed ${side === 'user' ? '' : 'mono text-white/90'}">
+                        ${text.replace(/\n/g, '<br>')}
+                    </div>
+                </div>
+            `;
+            chatArea.appendChild(wrap);
+            chatArea.parentElement.scrollTo({ top: chatArea.parentElement.scrollHeight, behavior: 'smooth' });
+        }
+
+        function appendAiLuauMessage(json) {
+            const wrap = document.createElement('div');
+            wrap.className = "flex justify-start w-full";
+            
+            // Escapa as backticks para evitar quebra no template literal do HTML
+            const safeCode = json.code.replace(/`/g, '\\`').replace(/\$/g, '\\$');
+            
+            wrap.innerHTML = `
+                <div class="message-ai px-6 py-6 max-w-[85%] border-l-2 border-blue-500 bg-blue-500/5">
+                    <div class="text-[9px] font-black text-blue-500 uppercase tracking-widest mb-3">ROBLOX LUAU ENGINE</div>
+                    <p class="text-[13px] mono text-white/80 leading-relaxed mb-6">${json.explanation || 'Código pronto.'}</p>
+                    <button class="luau-btn" id="openEditorBtn">
+                        <i class="fas fa-code"></i> ABRIR SCRIPT
+                    </button>
+                </div>
+            `;
+            
+            const btn = wrap.querySelector('#openEditorBtn');
+            btn.onclick = () => openEditor(json.scriptName, json.path, json.code);
+            
+            chatArea.appendChild(wrap);
+            activeScript.code = json.code;
+            chatArea.parentElement.scrollTo({ top: chatArea.parentElement.scrollHeight, behavior: 'smooth' });
+        }
+
+        document.getElementById('chatForm').onsubmit = (e) => {
+            e.preventDefault();
+            const val = userInput.value.trim();
+            if (val) {
+                userInput.value = '';
+                sendMessage(val);
+                plusMenu.style.display = 'none';
+            }
+        };
+
+        // Fecha menu ao clicar fora
+        document.addEventListener('click', (e) => {
+            if (!plusMenu.contains(e.target) && !document.getElementById('plusBtn').contains(e.target)) {
+                plusMenu.style.display = 'none';
+            }
+        });
+
+        window.onload = () => setMode('chat');
+    </script>
+</body>
+</html>
