@@ -1,282 +1,351 @@
-<!DOCTYPE html>
-<html lang="pt-pt">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>YO CODE BLOX | IA Roblox</title>
-    
-    <!-- Scripts Necessários -->
-    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&family=Fira+Code&display=swap" rel="stylesheet">
+import React, { useState, useEffect, useRef } from 'react';
+import { initializeApp } from 'firebase/app';
+import { 
+  getAuth, 
+  signInAnonymously, 
+  signInWithCustomToken, 
+  onAuthStateChanged 
+} from 'firebase/auth';
+import { 
+  getFirestore, 
+  doc, 
+  setDoc, 
+  getDoc, 
+  collection, 
+  onSnapshot, 
+  query, 
+  addDoc, 
+  deleteDoc,
+  updateDoc,
+  arrayUnion,
+  arrayRemove
+} from 'firebase/firestore';
 
-    <style>
-        body { font-family: 'Inter', sans-serif; background-color: #050505; color: #d4d4d8; margin: 0; overflow: hidden; }
-        .font-mono { font-family: 'Fira Code', monospace; }
-        ::-webkit-scrollbar { width: 4px; }
-        ::-webkit-scrollbar-thumb { background: #27272a; border-radius: 10px; }
-        .glass { background: rgba(10, 10, 11, 0.8); backdrop-filter: blur(12px); }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-        .animate-fade { animation: fadeIn 0.3s ease-out forwards; }
-    </style>
-</head>
-<body>
-    <div id="root"></div>
+const firebaseConfig = JSON.parse(__firebase_config);
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'yo-code-blox-v3';
 
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-app.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js";
-        import { getFirestore, doc, setDoc, getDoc, collection, onSnapshot } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore.js";
+// Função para gerar ID no formato 3F2-HS1-42D
+const generateCustomId = () => {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  const segment = () => Array.from({length: 3}, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+  return `${segment()}-${segment()}-${segment()}`;
+};
 
-        // CONFIGURAÇÃO FIREBASE
-        const firebaseConfig = {
-            apiKey: "AIzaSyCO9lSH65ozL8jsxiXp_pVlDMFjfXbgkMw",
-            authDomain: "yo-code-blox.firebaseapp.com",
-            projectId: "yo-code-blox",
-            storageBucket: "yo-code-blox.firebasestorage.app",
-            messagingSenderId: "724929810016",
-            appId: "1:724929810016:web:8f1b3316cfdc04f97a7d05"
-        };
+export default function App() {
+  const [user, setUser] = useState(null);
+  const [customId, setCustomId] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [chats, setChats] = useState([]);
+  const [activeChatId, setActiveChatId] = useState(null);
+  const [messages, setMessages] = useState([]);
+  const [input, setInput] = useState('');
+  const [isSending, setIsSending] = useState(false);
+  const [isEditorOpen, setIsEditorOpen] = useState(false);
+  const [activeScript, setActiveScript] = useState(null);
+  const [inviteId, setInviteId] = useState('');
+  
+  const chatRef = useRef(null);
+  const apiKey = ""; // Gemini API Key
 
-        const app = initializeApp(firebaseConfig);
-        const auth = getAuth(app);
-        const db = getFirestore(app);
-        const appId = "yo-code-blox-prod";
-
-        window.FB = { auth, db, appId, doc, setDoc, getDoc, collection, onSnapshot, signInAnonymously, onAuthStateChanged };
-    </script>
-
-    <script type="text/babel">
-        const { useState, useEffect, useRef } = React;
-
-        function App() {
-            const [user, setUser] = useState(null);
-            const [dbUser, setDbUser] = useState(null);
-            const [loading, setLoading] = useState(true);
-            const [authMode, setAuthMode] = useState('login');
-            const [form, setForm] = useState({ username: '', password: '' });
-            const [error, setError] = useState('');
-            
-            const [messages, setMessages] = useState([]);
-            const [input, setInput] = useState('');
-            const [sending, setSending] = useState(false);
-            const [scripts, setScripts] = useState([]);
-            const [activeScript, setActiveScript] = useState(null);
-            const [editorOpen, setEditorOpen] = useState(false);
-
-            const chatRef = useRef(null);
-
-            useEffect(() => {
-                const unsub = window.FB.onAuthStateChanged(window.FB.auth, async (u) => {
-                    if (!u) await window.FB.signInAnonymously(window.FB.auth);
-                    setUser(u);
-                    setLoading(false);
-                });
-                return unsub;
-            }, []);
-
-            useEffect(() => {
-                if (!dbUser) return;
-                const path = `artifacts/${window.FB.appId}/users/${dbUser.username.replace(/\s/g, '_')}`;
-                
-                const unsubS = window.FB.onSnapshot(window.FB.collection(window.FB.db, `${path}/scripts`), (s) => {
-                    setScripts(s.docs.map(d => ({ id: d.id, ...d.data() })));
-                });
-
-                const unsubM = window.FB.onSnapshot(window.FB.collection(window.FB.db, `${path}/messages`), (s) => {
-                    const m = s.docs.map(d => d.data()).sort((a, b) => a.ts - b.ts);
-                    setMessages(m);
-                });
-
-                return () => { unsubS(); unsubM(); };
-            }, [dbUser]);
-
-            useEffect(() => { chatRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
-
-            const handleAuth = async (e) => {
-                e.preventDefault();
-                setError('');
-                const id = form.username.trim().replace(/\s/g, '_');
-                const uRef = window.FB.doc(window.FB.db, `artifacts/${window.FB.appId}/public/data/users/${id}`);
-                
-                try {
-                    const snap = await window.FB.getDoc(uRef);
-                    if (authMode === 'register') {
-                        if (snap.exists()) return setError('Usuário já existe');
-                        await window.FB.setDoc(uRef, { ...form, ts: Date.now() });
-                        setDbUser({ username: id });
-                    } else {
-                        if (!snap.exists() || snap.data().password !== form.password) return setError('Dados incorretos');
-                        setDbUser({ username: id });
-                    }
-                } catch (e) { setError('Erro de conexão'); }
-            };
-
-            const sendMessage = async (e) => {
-                e.preventDefault();
-                if (!input.trim() || sending) return;
-                const txt = input;
-                setInput('');
-                setSending(true);
-
-                const path = `artifacts/${window.FB.appId}/users/${dbUser.username}/messages`;
-                await window.FB.setDoc(window.FB.doc(window.FB.collection(window.FB.db, path)), { role: 'user', content: txt, ts: Date.now() });
-
-                try {
-                    const res = await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=", {
-                        method: 'POST',
-                        body: JSON.stringify({
-                            contents: [{ parts: [{ text: txt }] }],
-                            systemInstruction: { parts: [{ text: "Expert Luau Roblox. Responda APENAS JSON: {\"explanation\":\"...\",\"scriptUpdate\":{\"name\":\"...\",\"code\":\"...\"}}" }] },
-                            generationConfig: { responseMimeType: "application/json" }
-                        })
-                    });
-                    const data = await res.json();
-                    const result = JSON.parse(data.candidates[0].content.parts[0].text);
-
-                    const sPath = `artifacts/${window.FB.appId}/users/${dbUser.username}/scripts`;
-                    const sId = result.scriptUpdate.name.toLowerCase().replace(/\s/g, '-');
-                    await window.FB.setDoc(window.FB.doc(window.FB.db, sPath, sId), { ...result.scriptUpdate, ts: Date.now() });
-                    await window.FB.setDoc(window.FB.doc(window.FB.collection(window.FB.db, path)), { 
-                        role: 'bot', content: result.explanation, scriptId: sId, ts: Date.now() 
-                    });
-                    setActiveScript({ ...result.scriptUpdate, id: sId });
-                    setEditorOpen(true);
-                } catch (err) { console.error(err); }
-                setSending(false);
-            };
-
-            if (loading) return <div className="h-screen flex items-center justify-center text-blue-500 font-black animate-pulse uppercase tracking-[0.3em]">Carregando...</div>;
-
-            if (!dbUser) return (
-                <div className="h-screen flex items-center justify-center p-6">
-                    <div className="w-full max-w-sm bg-[#0d0d0e] p-10 rounded-[2.5rem] border border-white/5 shadow-2xl">
-                        <div className="text-center mb-10">
-                            <div className="w-16 h-16 bg-blue-600 rounded-2xl mx-auto flex items-center justify-center mb-4 shadow-lg shadow-blue-600/20">
-                                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><path d="m18 16 4-4-4-4M6 8l-4 4 4 4M14.5 4l-5 16"/></svg>
-                            </div>
-                            <h1 className="text-2xl font-black italic text-white tracking-tighter uppercase">YO CODE BLOX</h1>
-                        </div>
-                        <form onSubmit={handleAuth} className="space-y-3">
-                            <input className="w-full bg-white/5 border border-white/10 rounded-xl px-5 py-4 text-white outline-none focus:border-blue-500 transition-all" placeholder="Usuário" onChange={e => setForm({...form, username: e.target.value})} />
-                            <input type="password" className="w-full bg-white/5 border border-white/10 rounded-xl px-5 py-4 text-white outline-none focus:border-blue-500 transition-all" placeholder="Senha" onChange={e => setForm({...form, password: e.target.value})} />
-                            {error && <p className="text-red-500 text-[10px] font-bold text-center uppercase tracking-widest">{error}</p>}
-                            <button className="w-full bg-white text-black font-black py-4 rounded-xl hover:bg-blue-600 hover:text-white transition-all uppercase tracking-widest">
-                                {authMode === 'login' ? 'Entrar' : 'Criar Conta'}
-                            </button>
-                        </form>
-                        <button onClick={() => setAuthMode(authMode === 'login' ? 'register' : 'login')} className="w-full mt-6 text-[10px] text-zinc-500 font-bold uppercase tracking-widest hover:text-blue-500">
-                            {authMode === 'login' ? 'Não tem conta? Registe-se' : 'Já tem conta? Login'}
-                        </button>
-                    </div>
-                </div>
-            );
-
-            return (
-                <div className="flex h-screen overflow-hidden">
-                    {/* Sidebar */}
-                    <aside className="w-72 border-r border-white/5 flex flex-col bg-[#080808] hidden lg:flex">
-                        <div className="p-8 border-b border-white/5 font-black italic text-xl tracking-tighter">YO CODE</div>
-                        <div className="flex-1 overflow-y-auto p-4 space-y-2">
-                            <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest px-4 mb-4">Meus Scripts</p>
-                            {scripts.map(s => (
-                                <button key={s.id} onClick={() => { setActiveScript(s); setEditorOpen(true); }} className={`w-full text-left p-4 rounded-2xl text-xs flex items-center gap-3 transition-all ${activeScript?.id === s.id ? 'bg-blue-600 text-white' : 'hover:bg-white/5 text-zinc-500'}`}>
-                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
-                                    <span className="truncate uppercase font-bold">{s.name}</span>
-                                </button>
-                            ))}
-                        </div>
-                        <button onClick={() => location.reload()} className="p-8 border-t border-white/5 text-[10px] font-black text-zinc-600 hover:text-red-500 uppercase tracking-widest transition-colors">Sair da Sessão</button>
-                    </aside>
-
-                    {/* Chat */}
-                    <main className={`flex-1 flex flex-col relative transition-all duration-500 ${editorOpen ? 'lg:mr-[45%]' : ''}`}>
-                        <header className="h-20 border-b border-white/5 flex items-center px-8 justify-between glass sticky top-0 z-10">
-                            <div className="flex items-center gap-4">
-                                <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                                <span className="text-[10px] font-black tracking-widest uppercase text-zinc-500 italic">Cloud Engine Ativa</span>
-                            </div>
-                            {scripts.length > 0 && (
-                                <button onClick={() => setEditorOpen(!editorOpen)} className="text-[10px] font-black bg-white text-black px-6 py-2 rounded-full uppercase tracking-widest hover:bg-blue-600 hover:text-white transition-all">
-                                    {editorOpen ? 'Fechar Editor' : 'Ver Código'}
-                                </button>
-                            )}
-                        </header>
-
-                        <div className="flex-1 overflow-y-auto p-8 space-y-8">
-                            {messages.length === 0 && (
-                                <div className="h-full flex flex-col items-center justify-center opacity-20 italic">
-                                    <p className="text-sm font-bold uppercase tracking-[0.5em]">Aguardando Prompt...</p>
-                                </div>
-                            )}
-                            {messages.map((m, i) => (
-                                <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'} animate-fade`}>
-                                    <div className={`max-w-[80%] p-6 rounded-[2rem] text-sm leading-relaxed ${m.role === 'user' ? 'bg-white text-black font-semibold' : 'bg-white/5 border border-white/5 text-zinc-300 shadow-xl'}`}>
-                                        {m.content}
-                                        {m.scriptId && (
-                                            <button onClick={() => { 
-                                                const s = scripts.find(sc => sc.id === m.scriptId);
-                                                setActiveScript(s); setEditorOpen(true); 
-                                            }} className="mt-4 w-full flex items-center justify-between p-4 bg-black/40 rounded-2xl border border-white/10 hover:border-blue-500 transition-all group">
-                                                <span className="text-[10px] font-black uppercase text-white tracking-widest">Abrir Script Gerado</span>
-                                                <svg className="group-hover:translate-x-1 transition-transform" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="m9 18 6-6-6-6"/></svg>
-                                            </button>
-                                        )}
-                                    </div>
-                                </div>
-                            ))}
-                            {sending && <div className="text-blue-500 text-[10px] font-black uppercase tracking-widest animate-pulse italic">Processando Inteligência Artificial...</div>}
-                            <div ref={chatRef} />
-                        </div>
-
-                        <footer className="p-8">
-                            <form onSubmit={sendMessage} className="max-w-4xl mx-auto relative group">
-                                <input value={input} onChange={e => setInput(e.target.value)} placeholder="O que vamos construir hoje?" className="w-full bg-[#121214] border border-white/10 rounded-[2rem] px-8 py-5 pr-16 text-white text-sm outline-none focus:border-blue-600 focus:bg-black transition-all shadow-2xl" />
-                                <button className="absolute right-3 top-1/2 -translate-y-1/2 w-12 h-12 bg-white text-black rounded-full flex items-center justify-center hover:bg-blue-600 hover:text-white transition-all shadow-lg active:scale-90">
-                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-                                </button>
-                            </form>
-                        </footer>
-                    </main>
-
-                    {/* Editor Lateral */}
-                    {editorOpen && (
-                        <aside className="fixed right-0 top-0 bottom-0 w-full lg:w-[45%] bg-[#050505] border-l border-white/10 z-50 flex flex-col animate-fade">
-                            <header className="h-20 border-b border-white/10 flex items-center justify-between px-8 bg-[#0a0a0b]">
-                                <div>
-                                    <p className="text-[10px] font-black text-white uppercase italic tracking-widest leading-none">{activeScript?.name || 'Seletor de Scripts'}</p>
-                                    <p className="text-[8px] text-zinc-600 font-bold uppercase mt-1">Script de Ambiente Luau</p>
-                                </div>
-                                <button onClick={() => setEditorOpen(false)} className="w-10 h-10 flex items-center justify-center rounded-full hover:bg-red-500/10 hover:text-red-500 transition-all">
-                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M18 6 6 18M6 6l12 12"/></svg>
-                                </button>
-                            </header>
-                            <div className="flex-1 overflow-auto p-8 font-mono text-sm bg-[#020202]">
-                                {activeScript ? (
-                                    <div className="space-y-6">
-                                        <div className="flex justify-end">
-                                            <button onClick={() => {
-                                                const t = document.createElement('textarea'); t.value = activeScript.code;
-                                                document.body.appendChild(t); t.select(); document.execCommand('copy');
-                                                document.body.removeChild(t);
-                                            }} className="bg-white/5 border border-white/10 px-6 py-2 rounded-xl text-[10px] font-black text-zinc-400 hover:text-white hover:border-blue-500 transition-all uppercase tracking-widest">Copiar Código</button>
-                                        </div>
-                                        <pre className="text-blue-300 leading-relaxed"><code dangerouslySetInnerHTML={{ __html: activeScript.code.replace(/\n/g, '<br/>') }} /></pre>
-                                    </div>
-                                ) : (
-                                    <div className="h-full flex items-center justify-center text-zinc-800 font-black text-xs uppercase tracking-[0.4em]">Selecione um script na lista</div>
-                                )}
-                            </div>
-                        </aside>
-                    )}
-                </div>
-            );
+  useEffect(() => {
+    const initAuth = async () => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
         }
+      } catch (error) { console.error("Auth error:", error); }
+    };
+    initAuth();
+    const unsubscribe = onAuthStateChanged(auth, (u) => {
+      if (u) {
+        // Gerar ou recuperar ID amigável
+        const storedId = localStorage.getItem(`custom_id_${u.uid}`) || generateCustomId();
+        localStorage.setItem(`custom_id_${u.uid}`, storedId);
+        setCustomId(storedId);
+      }
+      setUser(u);
+      setLoading(false);
+    });
+    return () => unsubscribe();
+  }, []);
 
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
-    </script>
-</body>
-</html>
+  // Monitorar Chats e Criar "Welcome" se estiver vazio
+  useEffect(() => {
+    if (!user) return;
+    const chatsRef = collection(db, 'artifacts', appId, 'public', 'data', 'chats');
+    const unsubscribe = onSnapshot(chatsRef, (snapshot) => {
+      const allChats = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      const myChats = allChats.filter(c => 
+        c.owner === user.uid || (c.members && c.members.includes(customId))
+      );
+      
+      setChats(myChats);
+
+      // Se não houver chats, cria o inicial "Welcome"
+      if (myChats.length === 0 && !loading) {
+        createNewChat("Welcome");
+      }
+    });
+    return () => unsubscribe();
+  }, [user, customId, loading]);
+
+  // Monitorar Mensagens
+  useEffect(() => {
+    if (!user || !activeChatId) {
+      setMessages([]);
+      return;
+    }
+    const msgsRef = collection(db, 'artifacts', appId, 'public', 'data', 'chats', activeChatId, 'messages');
+    const unsubscribe = onSnapshot(msgsRef, (snapshot) => {
+      const list = snapshot.docs.map(d => ({ id: d.id, ...d.data() }))
+        .sort((a, b) => (a.ts || 0) - (b.ts || 0));
+      setMessages(list);
+    });
+    return () => unsubscribe();
+  }, [user, activeChatId]);
+
+  useEffect(() => { chatRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
+
+  const createNewChat = async (name = null) => {
+    if (!user) return;
+    const chatName = name || `Chat ${chats.length + 1}`;
+    const newChat = {
+      name: chatName,
+      owner: user.uid,
+      members: [customId],
+      ts: Date.now()
+    };
+    const docRef = await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'chats'), newChat);
+    setActiveChatId(docRef.id);
+  };
+
+  const deleteChat = async (id, e) => {
+    e.stopPropagation();
+    await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'chats', id));
+    if (activeChatId === id) setActiveChatId(null);
+  };
+
+  const inviteUser = async () => {
+    if (!inviteId.trim() || !activeChatId) return;
+    const chatRefDoc = doc(db, 'artifacts', appId, 'public', 'data', 'chats', activeChatId);
+    await updateDoc(chatRefDoc, { members: arrayUnion(inviteId.trim()) });
+    setInviteId('');
+  };
+
+  const removeUser = async (mid) => {
+    if (!activeChatId) return;
+    const chatRefDoc = doc(db, 'artifacts', appId, 'public', 'data', 'chats', activeChatId);
+    await updateDoc(chatRefDoc, { members: arrayRemove(mid) });
+  };
+
+  const onSend = async (e) => {
+    e.preventDefault();
+    if (!input.trim() || isSending || !activeChatId) return;
+    
+    const text = input;
+    setInput('');
+    setIsSending(true);
+
+    const chatPath = `artifacts/${appId}/public/data/chats/${activeChatId}`;
+    
+    try {
+      await addDoc(collection(db, chatPath, 'messages'), {
+        role: 'user', content: text, sender: customId, ts: Date.now()
+      });
+
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text }] }],
+          systemInstruction: { parts: [{ text: "Você é YO CODE AI. Responda APENAS JSON Luau Roblox: {\"explanation\":\"...\",\"scriptUpdate\":{\"name\":\"...\",\"code\":\"...\"}}" }] },
+          generationConfig: { responseMimeType: "application/json" }
+        })
+      });
+      
+      const data = await res.json();
+      const result = JSON.parse(data.candidates[0].content.parts[0].text);
+
+      // Salva o script e a mensagem do bot com o código embutido
+      await addDoc(collection(db, chatPath, 'messages'), {
+        role: 'bot',
+        content: result.explanation,
+        scriptData: result.scriptUpdate,
+        ts: Date.now()
+      });
+
+    } catch (err) { console.error(err); } finally { setIsSending(false); }
+  };
+
+  if (loading) return (
+    <div className="h-screen bg-black flex items-center justify-center text-white font-black uppercase tracking-widest animate-pulse">
+      Carregando Yo Code Blox...
+    </div>
+  );
+
+  return (
+    <div className="flex h-screen bg-[#050505] text-zinc-300 font-sans overflow-hidden">
+      
+      {/* SIDEBAR */}
+      <aside className="w-80 border-r border-white/5 flex flex-col bg-[#0a0a0b]">
+        <div className="p-6 border-b border-white/5 flex justify-between items-center">
+          <h1 className="font-black italic text-white tracking-tighter text-xl">YO CODE</h1>
+          <button onClick={() => createNewChat()} className="p-2 bg-white/5 rounded-xl hover:bg-blue-600 transition-all group">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" className="group-hover:text-white"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-4 space-y-2">
+          <p className="text-[9px] font-black uppercase text-zinc-600 mb-2 px-2 tracking-widest">Meus Chats</p>
+          {chats.map(c => (
+            <div 
+              key={c.id} 
+              onClick={() => setActiveChatId(c.id)}
+              className={`group flex items-center justify-between p-4 rounded-2xl cursor-pointer transition-all ${activeChatId === c.id ? 'bg-blue-600 text-white shadow-lg' : 'hover:bg-white/5'}`}
+            >
+              <span className="text-[11px] font-bold truncate uppercase tracking-tight">{c.name}</span>
+              <button onClick={(e) => deleteChat(c.id, e)} className="opacity-0 group-hover:opacity-100 p-1 hover:text-red-400 transition-opacity">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+              </button>
+            </div>
+          ))}
+        </div>
+
+        {/* COLABORADORES */}
+        {activeChatId && (
+          <div className="p-4 border-t border-white/5 bg-black/20">
+            <p className="text-[9px] font-black uppercase text-zinc-600 mb-3 tracking-widest">Convidar User</p>
+            <div className="flex gap-2 mb-4">
+              <input 
+                value={inviteId}
+                onChange={e => setInviteId(e.target.value)}
+                placeholder="Ex: 3F2-HS1-42D"
+                className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-[10px] outline-none focus:border-blue-500 font-mono"
+              />
+              <button onClick={inviteUser} className="bg-white text-black px-3 py-2 rounded-xl text-[10px] font-black uppercase hover:bg-blue-500 hover:text-white transition-all">Add</button>
+            </div>
+            <div className="max-h-24 overflow-y-auto space-y-1">
+              {chats.find(c => c.id === activeChatId)?.members?.map(mid => (
+                <div key={mid} className="flex items-center justify-between text-[9px] bg-white/5 p-2 rounded-lg border border-white/5">
+                  <span className="truncate font-mono">{mid === customId ? "Você" : mid}</span>
+                  {mid !== customId && (
+                    <button onClick={() => removeUser(mid)} className="text-red-500 font-bold hover:scale-125 transition-transform px-1">✕</button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="p-6 border-t border-white/5 bg-black">
+          <p className="text-[8px] text-zinc-600 uppercase font-black mb-1">Seu ID de Acesso:</p>
+          <p className="text-[12px] font-black text-blue-500 font-mono select-all tracking-wider">
+            {customId}
+          </p>
+        </div>
+      </aside>
+
+      {/* CHAT AREA */}
+      <main className={`flex-1 flex flex-col relative transition-all duration-500 ${isEditorOpen ? 'lg:mr-[45%]' : ''}`}>
+        {!activeChatId ? (
+          <div className="flex-1 flex items-center justify-center opacity-10">
+             <h1 className="text-6xl font-black italic tracking-tighter">YO CODE</h1>
+          </div>
+        ) : (
+          <>
+            <header className="h-20 border-b border-white/5 flex items-center px-8 justify-between bg-[#0a0a0b]/80 backdrop-blur-xl z-10">
+              <div className="flex flex-col">
+                <span className="text-[9px] font-black uppercase text-blue-500 tracking-[0.2em]">Active Session</span>
+                <h2 className="text-sm font-bold text-white uppercase">{chats.find(c => c.id === activeChatId)?.name}</h2>
+              </div>
+            </header>
+
+            <div className="flex-1 overflow-y-auto p-8 space-y-6">
+              {messages.map((m, i) => (
+                <div key={i} className={`flex ${m.sender === customId ? 'justify-end' : 'justify-start'} animate-fade`}>
+                  <div className={`max-w-[75%] p-6 rounded-[2.5rem] text-sm leading-relaxed ${m.role === 'user' ? 'bg-white text-black font-bold shadow-2xl' : 'bg-[#121214] border border-white/5 text-zinc-300'}`}>
+                    <p className="text-[8px] uppercase font-black opacity-30 mb-2">{m.sender === customId ? 'Você' : 'YO AI'}</p>
+                    {m.content}
+                    {m.scriptData && (
+                      <button 
+                        onClick={() => { setActiveScript(m.scriptData); setIsEditorOpen(true); }}
+                        className="mt-5 w-full p-4 bg-blue-600 text-white rounded-2xl border border-white/10 hover:bg-blue-700 transition-all text-[10px] font-black uppercase tracking-widest shadow-lg shadow-blue-600/20"
+                      >
+                        Abrir Script: {m.scriptData.name}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+              <div ref={chatRef} />
+            </div>
+
+            <footer className="p-8 bg-gradient-to-t from-black via-black/80 to-transparent">
+              <form onSubmit={onSend} className="max-w-4xl mx-auto relative">
+                <input 
+                  value={input} 
+                  onChange={e => setInput(e.target.value)} 
+                  placeholder="Descreva a lógica do Roblox..."
+                  className="w-full bg-[#121214] border border-white/10 rounded-[2.5rem] px-10 py-6 pr-20 text-white text-sm outline-none focus:border-blue-600 focus:ring-4 ring-blue-600/5 transition-all shadow-2xl"
+                />
+                <button type="submit" disabled={isSending} className="absolute right-4 top-1/2 -translate-y-1/2 w-14 h-14 bg-white text-black rounded-full flex items-center justify-center hover:bg-blue-600 hover:text-white transition-all disabled:opacity-20">
+                  {isSending ? <div className="w-5 h-5 border-2 border-black border-t-transparent rounded-full animate-spin"></div> : <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M5 12h14M12 5l7 7-7 7"/></svg>}
+                </button>
+              </form>
+            </footer>
+          </>
+        )}
+      </main>
+
+      {/* EDITOR */}
+      {isEditorOpen && (
+        <aside className="fixed right-0 top-0 bottom-0 w-full lg:w-[45%] bg-[#050505] border-l border-white/10 z-50 flex flex-col animate-fade shadow-2xl">
+          <header className="h-20 border-b border-white/10 flex items-center justify-between px-8 bg-[#0a0a0b]">
+            <div>
+              <p className="text-[9px] font-black text-blue-500 uppercase tracking-widest">Script Viewer</p>
+              <h3 className="text-xs font-bold text-white uppercase">{activeScript?.name}</h3>
+            </div>
+            <button onClick={() => setIsEditorOpen(false)} className="text-zinc-500 hover:text-white p-2">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button>
+          </header>
+          
+          <div className="flex-1 overflow-auto bg-[#020202] p-8">
+            {activeScript ? (
+              <div className="space-y-6">
+                <button onClick={() => {
+                  const t = document.createElement('textarea'); t.value = activeScript.code;
+                  document.body.appendChild(t); t.select(); document.execCommand('copy');
+                  document.body.removeChild(t);
+                }} className="w-full bg-white text-black py-4 rounded-2xl text-[10px] font-black uppercase hover:bg-blue-600 hover:text-white transition-all shadow-xl">Copiar Código Luau</button>
+                
+                <div className="relative group">
+                  <div className="absolute -inset-1 bg-gradient-to-r from-blue-600 to-purple-600 rounded-3xl blur opacity-20"></div>
+                  <pre className="relative font-mono text-[11px] text-blue-400 leading-relaxed p-8 bg-black rounded-3xl border border-white/5 overflow-x-auto">
+                    <code>{activeScript.code}</code>
+                  </pre>
+                </div>
+              </div>
+            ) : (
+              <div className="h-full flex items-center justify-center opacity-20 uppercase font-black text-[10px]">Nenhum script ativo</div>
+            )}
+          </div>
+        </aside>
+      )}
+
+      <style>{`
+        @keyframes fadeIn { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: translateX(0); } }
+        .animate-fade { animation: fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+        .animate-spin-slow { animation: spin 12s linear infinite; }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        ::-webkit-scrollbar { width: 5px; }
+        ::-webkit-scrollbar-thumb { background: #27272a; border-radius: 10px; }
+      `}</style>
+    </div>
+  );
+}
