@@ -19,6 +19,7 @@
             font-family: 'Inter', sans-serif;
             overflow: hidden;
             letter-spacing: -0.02em;
+            margin: 0;
         }
         .mono { font-family: 'JetBrains Mono', monospace; }
         
@@ -104,6 +105,7 @@
             align-items: center;
             gap: 8px;
             transition: transform 0.2s;
+            cursor: pointer;
         }
 
         input:focus, textarea:focus { outline: none; border-color: var(--roblox-blue) !important; }
@@ -200,6 +202,7 @@
     </main>
 
     <script type="module">
+        // CONFIGURAÇÕES
         const apiKey = ""; 
 
         const chatArea = document.getElementById('chatArea');
@@ -215,11 +218,12 @@
         const scriptPath = document.getElementById('scriptPath');
 
         // ESTADO GLOBAL
-        let currentMode = 'chat'; // 'chat' ou 'roblox'
+        let currentMode = 'chat'; 
         let activeScript = { name: "MainModule.lua", path: "ServerScriptService", code: "" };
         
         botInstruction.value = "Você é o YO, uma IA de chat minimalista e moderna. Suas respostas são diretas.";
 
+        // FUNÇÕES DE UI
         window.togglePlusMenu = () => {
             plusMenu.style.display = plusMenu.style.display === 'block' ? 'none' : 'block';
         };
@@ -237,21 +241,20 @@
             currentMode = mode;
             plusMenu.style.display = 'none';
             
-            // UI Updates
             document.getElementById('optChat').classList.toggle('active', mode === 'chat');
             document.getElementById('optRoblox').classList.toggle('active', mode === 'roblox');
             
             if(mode === 'roblox') {
                 modeStatus.innerText = "Especialista Luau Ativado";
-                modeStatus.classList.replace('text-gray-500', 'text-blue-500');
+                modeStatus.style.color = "#00A2FF";
                 luauIndicator.classList.remove('hidden');
                 userInput.placeholder = "O que vamos programar no Roblox?";
             } else {
                 modeStatus.innerText = "Conversa Normal";
-                modeStatus.classList.replace('text-blue-500', 'text-gray-500');
+                modeStatus.style.color = "rgba(255,255,255,0.4)";
                 luauIndicator.classList.add('hidden');
                 userInput.placeholder = "Digite sua mensagem...";
-                activeScript.code = ""; // Reseta script ao sair do modo roblox
+                activeScript.code = "";
             }
         };
 
@@ -270,17 +273,14 @@
         window.copyCurrentScript = () => {
             const text = editorCode.innerText;
             navigator.clipboard.writeText(text).then(() => {
-                // Feedback visual simples pode ser adicionado aqui
-            }).catch(() => {
-                const temp = document.createElement('textarea');
-                temp.value = text;
-                document.body.appendChild(temp);
-                temp.select();
-                document.execCommand('copy');
-                document.body.removeChild(temp);
+                const btn = document.querySelector('button[onclick="copyCurrentScript()"]');
+                const old = btn.innerHTML;
+                btn.innerHTML = '<i class="fas fa-check text-green-400"></i> Copied!';
+                setTimeout(() => btn.innerHTML = old, 2000);
             });
         };
 
+        // COMUNICAÇÃO COM API
         async function sendMessage(text) {
             appendMessage(text, 'user');
             
@@ -291,13 +291,10 @@
             chatArea.parentElement.scrollTo({ top: chatArea.parentElement.scrollHeight, behavior: 'smooth' });
 
             const isLuau = currentMode === 'roblox';
-            
-            // PROMPT DINÂMICO
             const systemPrompt = isLuau 
-                ? `Você é um Especialista Magnífico em Luau (Roblox). 
-                   Crie códigos otimizados.
-                   SE houver um script já existente (Contexto abaixo), NÃO o apague. Apenas adicione ou remova as linhas conforme solicitado.
-                   Retorne APENAS um JSON válido no formato: { "scriptName": "nome", "path": "local", "code": "codigo_completo_atualizado", "explanation": "fala_curta" }`
+                ? `Você é um Especialista Magnífico em Luau (Roblox). Crie códigos otimizados. 
+                   SE houver script existente abaixo, NÃO o apague, apenas edite.
+                   Retorne APENAS JSON: { "scriptName": "nome", "path": "local", "code": "codigo", "explanation": "fala" }`
                 : botInstruction.value;
 
             try {
@@ -305,7 +302,7 @@
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        contents: [{ parts: [{ text: isLuau ? `Script Atual:\n${activeScript.code}\n\nPedido do Usuário: ${text}` : text }] }],
+                        contents: [{ parts: [{ text: isLuau ? `Script Atual:\n${activeScript.code}\n\nPedido: ${text}` : text }] }],
                         systemInstruction: { parts: [{ text: systemPrompt }] },
                         generationConfig: isLuau ? { responseMimeType: "application/json" } : {}
                     })
@@ -314,27 +311,21 @@
                 const data = await response.json();
                 tNode.remove();
 
+                const aiText = data.candidates?.[0]?.content?.parts?.[0]?.text;
                 if (isLuau) {
-                    const contentText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-                    if (contentText) {
-                        try {
-                            const result = JSON.parse(contentText);
-                            appendAiLuauMessage(result);
-                        } catch (jsonErr) {
-                            appendMessage("Erro ao processar os dados do script. Tente novamente.", 'ai');
-                        }
-                    } else {
-                        appendMessage("Resposta vazia da IA.", 'ai');
+                    try {
+                        const result = JSON.parse(aiText);
+                        appendAiLuauMessage(result);
+                    } catch (e) {
+                        appendMessage(aiText || "Erro no formato JSON.", 'ai');
                     }
                 } else {
-                    const aiText = data.candidates?.[0]?.content?.parts?.[0]?.text || "Sem resposta.";
-                    appendMessage(aiText, 'ai');
+                    appendMessage(aiText || "Sem resposta.", 'ai');
                 }
 
             } catch (e) {
-                if (tNode) tNode.remove();
-                appendMessage("FALHA NO LINK NEURAL: Verifique sua conexão.", 'ai');
-                console.error(e);
+                tNode.remove();
+                appendMessage("ERRO: Verifique a chave de API e conexão.", 'ai');
             }
         }
 
@@ -342,7 +333,7 @@
             const wrap = document.createElement('div');
             wrap.className = side === 'user' ? "flex justify-end w-full" : "flex justify-start w-full";
             wrap.innerHTML = `
-                <div class="${side === 'user' ? 'message-user' : 'message-ai'} px-6 py-4 max-w-[85%]">
+                <div class="${side === 'user' ? 'message-user' : 'message-ai'} px-6 py-4 max-w-[85%] shadow-lg">
                     <div class="text-[13px] leading-relaxed ${side === 'user' ? '' : 'mono text-white/90'}">
                         ${text.replace(/\n/g, '<br>')}
                     </div>
@@ -355,23 +346,17 @@
         function appendAiLuauMessage(json) {
             const wrap = document.createElement('div');
             wrap.className = "flex justify-start w-full";
-            
-            // Escapa as backticks para evitar quebra no template literal do HTML
-            const safeCode = json.code.replace(/`/g, '\\`').replace(/\$/g, '\\$');
-            
             wrap.innerHTML = `
                 <div class="message-ai px-6 py-6 max-w-[85%] border-l-2 border-blue-500 bg-blue-500/5">
                     <div class="text-[9px] font-black text-blue-500 uppercase tracking-widest mb-3">ROBLOX LUAU ENGINE</div>
-                    <p class="text-[13px] mono text-white/80 leading-relaxed mb-6">${json.explanation || 'Código pronto.'}</p>
+                    <p class="text-[13px] mono text-white/80 leading-relaxed mb-6">${json.explanation || 'Código atualizado.'}</p>
                     <button class="luau-btn" id="openEditorBtn">
                         <i class="fas fa-code"></i> ABRIR SCRIPT
                     </button>
                 </div>
             `;
-            
             const btn = wrap.querySelector('#openEditorBtn');
             btn.onclick = () => openEditor(json.scriptName, json.path, json.code);
-            
             chatArea.appendChild(wrap);
             activeScript.code = json.code;
             chatArea.parentElement.scrollTo({ top: chatArea.parentElement.scrollHeight, behavior: 'smooth' });
@@ -387,7 +372,6 @@
             }
         };
 
-        // Fecha menu ao clicar fora
         document.addEventListener('click', (e) => {
             if (!plusMenu.contains(e.target) && !document.getElementById('plusBtn').contains(e.target)) {
                 plusMenu.style.display = 'none';
