@@ -29,6 +29,7 @@
             100% { border-color: rgba(59, 130, 246, 0.2); }
         }
         .active-input { animation: pulse-border 2s infinite; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
     </style>
 </head>
 <body>
@@ -49,6 +50,27 @@
             const scrollToBottom = () => chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
             useEffect(scrollToBottom, [messages, loading]);
 
+            // Função com Exponential Backoff para resiliência da API
+            const fetchWithRetry = async (url, options, retries = 5, backoff = 1000) => {
+                try {
+                    const response = await fetch(url, options);
+                    if (!response.ok) {
+                        if (retries > 0 && response.status >= 500) {
+                            await new Promise(resolve => setTimeout(resolve, backoff));
+                            return fetchWithRetry(url, options, retries - 1, backoff * 2);
+                        }
+                        throw new Error(`HTTP Error: ${response.status}`);
+                    }
+                    return response;
+                } catch (err) {
+                    if (retries > 0) {
+                        await new Promise(resolve => setTimeout(resolve, backoff));
+                        return fetchWithRetry(url, options, retries - 1, backoff * 2);
+                    }
+                    throw err;
+                }
+            };
+
             const sendMessage = async (e) => {
                 e.preventDefault();
                 if (!input.trim() || loading) return;
@@ -59,39 +81,46 @@
                 setLoading(true);
 
                 try {
-                    // Configuração da API - Chave vazia para o ambiente injetar
+                    // Chave de API vazia para o ambiente injetar ou para substituição manual
                     const apiKey = ""; 
                     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
 
-                    const prompt = `Você é um desenvolvedor expert em Roblox Luau. 
-                    Responda ao pedido: "${userText}". 
-                    FORME A RESPOSTA APENAS NESTE FORMATO JSON (SEM MARKDOWN):
+                    const systemPrompt = "Você é um desenvolvedor expert em Roblox Luau. Responda pedidos de script com precisão técnica.";
+                    const userPrompt = `Pedido: "${userText}". 
+                    FORME A RESPOSTA APENAS NESTE FORMATO JSON:
                     {"explanacao": "texto", "script": {"nome": "nome", "local": "local", "codigo": "codigo"}}`;
 
-                    const response = await fetch(endpoint, {
+                    const response = await fetchWithRetry(endpoint, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
-                            contents: [{ parts: [{ text: prompt }] }],
-                            generationConfig: { responseMimeType: "application/json" }
+                            contents: [{ parts: [{ text: userPrompt }] }],
+                            systemInstruction: { parts: [{ text: systemPrompt }] },
+                            generationConfig: { 
+                                responseMimeType: "application/json",
+                                temperature: 0.7
+                            }
                         })
                     });
-
-                    if (!response.ok) throw new Error("Falha na API");
                     
                     const data = await response.json();
-                    const aiResult = JSON.parse(data.candidates[0].content.parts[0].text);
+                    const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+                    
+                    if (!rawText) throw new Error("Resposta vazia da IA");
+                    
+                    const aiResult = JSON.parse(rawText);
 
                     setMessages(prev => [...prev, { 
                         role: 'ai', 
-                        content: aiResult.explanacao, 
+                        content: aiResult.explanacao || "Script gerado com sucesso.", 
                         script: aiResult.script 
                     }]);
 
                 } catch (err) {
+                    console.error("Erro na conexão:", err);
                     setMessages(prev => [...prev, { 
                         role: 'ai', 
-                        content: "ERRO CRÍTICO: Não foi possível conectar ao motor YO Intelligence. Verifique a sua ligação." 
+                        content: `ERRO DE CONEXÃO: ${err.message}. Certifique-se de que a API Key está configurada corretamente no código.` 
                     }]);
                 } finally {
                     setLoading(false);
@@ -100,13 +129,13 @@
 
             if (step === 'auth') {
                 return (
-                    <div className="h-screen flex items-center justify-center p-6">
+                    <div className="h-screen flex items-center justify-center p-6 bg-[#050505]">
                         <div className="glass p-12 rounded-[2rem] w-full max-w-md text-center border-white/5">
                             <div className="w-20 h-20 bg-blue-600 rounded-3xl mx-auto mb-8 flex items-center justify-center shadow-2xl shadow-blue-600/30">
                                 <span className="text-3xl font-black italic">YO</span>
                             </div>
                             <h1 className="text-2xl font-black uppercase tracking-tighter mb-2">Aceder Workspace</h1>
-                            <p className="text-zinc-500 text-xs font-bold uppercase tracking-widest mb-10">Versão Profissional 3.0</p>
+                            <p className="text-zinc-500 text-xs font-bold uppercase tracking-widest mb-10">Versão Profissional 3.1</p>
                             
                             <input 
                                 className="w-full bg-white/5 border border-white/10 rounded-2xl py-5 px-6 text-center outline-none focus:border-blue-500 transition-all text-sm font-bold uppercase tracking-widest mb-4"
@@ -116,7 +145,8 @@
                             />
                             <button 
                                 onClick={() => username && setStep('chat')}
-                                className="w-full bg-blue-600 hover:bg-blue-500 py-5 rounded-2xl font-black uppercase tracking-widest transition-all shadow-lg shadow-blue-600/20"
+                                disabled={!username}
+                                className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 py-5 rounded-2xl font-black uppercase tracking-widest transition-all shadow-lg shadow-blue-600/20"
                             >
                                 Iniciar Motor
                             </button>
@@ -126,31 +156,34 @@
             }
 
             return (
-                <div className="flex h-screen w-full">
+                <div className="flex h-screen w-full bg-[#050505]">
                     {/* Sidebar */}
-                    <div className="w-72 bg-[#080808] border-r border-white/5 flex flex-col p-8">
+                    <div className="w-72 bg-[#080808] border-r border-white/5 flex flex-col p-8 shrink-0">
                         <div className="flex items-center gap-3 mb-12">
                             <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center font-black italic text-xs">Y</div>
                             <span className="font-black italic text-lg">YO STUDIO</span>
                         </div>
                         
-                        <div className="flex-1 overflow-y-auto space-y-4">
+                        <div className="flex-1 overflow-y-auto space-y-4 no-scrollbar">
                             <p className="text-[10px] font-black text-zinc-600 uppercase tracking-widest">Scripts Gerados</p>
                             {messages.filter(m => m.script).map((m, i) => (
                                 <div 
                                     key={i}
                                     onClick={() => setViewScript(m.script)}
-                                    className="p-4 glass rounded-xl text-[10px] font-bold text-zinc-400 hover:text-white cursor-pointer transition-all border-white/5"
+                                    className="p-4 glass rounded-xl text-[10px] font-bold text-zinc-400 hover:text-white cursor-pointer transition-all border-white/5 hover:border-blue-500/50"
                                 >
                                     {m.script.nome}
                                 </div>
                             ))}
+                            {messages.filter(m => m.script).length === 0 && (
+                                <p className="text-[9px] text-zinc-700 italic">Nenhum script na sessão...</p>
+                            )}
                         </div>
 
-                        <div className="pt-6 border-t border-white/5 flex items-center gap-3">
-                            <div className="w-10 h-10 bg-zinc-800 rounded-full border border-white/10 flex items-center justify-center font-bold text-xs">{username[0]}</div>
-                            <div>
-                                <p className="text-xs font-black uppercase">{username}</p>
+                        <div className="pt-6 border-t border-white/5 flex items-center gap-3 mt-4">
+                            <div className="w-10 h-10 bg-zinc-800 rounded-full border border-white/10 flex items-center justify-center font-bold text-xs shrink-0">{username[0]}</div>
+                            <div className="overflow-hidden">
+                                <p className="text-xs font-black uppercase truncate">{username}</p>
                                 <div className="flex items-center gap-1.5">
                                     <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></div>
                                     <span className="text-[9px] font-bold text-zinc-500 uppercase">Sessão Ativa</span>
@@ -160,54 +193,63 @@
                     </div>
 
                     {/* Main Content */}
-                    <div className="flex-1 flex flex-col bg-[#050505] relative">
+                    <div className="flex-1 flex flex-col relative overflow-hidden">
                         {/* Header */}
-                        <div className="h-20 border-b border-white/5 flex items-center px-10 bg-black/20 backdrop-blur-md justify-between">
+                        <div className="h-20 border-b border-white/5 flex items-center px-10 bg-black/20 backdrop-blur-md justify-between shrink-0">
                             <div className="flex items-center gap-4">
                                 <span className="text-[10px] font-black text-zinc-600 uppercase tracking-widest">Terminal</span>
                                 <div className="h-1 w-1 bg-zinc-800 rounded-full"></div>
-                                <span className="text-[10px] font-bold text-blue-500 uppercase tracking-widest">yo/intelligence/v3</span>
+                                <span className="text-[10px] font-bold text-blue-500 uppercase tracking-widest">yo/intelligence/v3.1</span>
                             </div>
                         </div>
 
                         {/* Chat */}
                         <div className="flex-1 overflow-y-auto p-10 space-y-8 no-scrollbar">
+                            {messages.length === 0 && (
+                                <div className="h-full flex flex-col items-center justify-center opacity-20 pointer-events-none">
+                                    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                                    <p className="mt-4 font-black uppercase tracking-widest text-xs">Aguardando Prompt</p>
+                                </div>
+                            )}
                             {messages.map((m, i) => (
                                 <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                                    <div className={`max-w-[70%] p-6 rounded-3xl ${m.role === 'user' ? 'bg-blue-600 shadow-xl shadow-blue-600/10' : 'glass border-white/10 text-zinc-300'}`}>
-                                        <p className="text-sm leading-relaxed">{m.content}</p>
+                                    <div className={`max-w-[80%] p-6 rounded-3xl ${m.role === 'user' ? 'bg-blue-600 shadow-xl shadow-blue-600/10 text-white' : 'glass border-white/10 text-zinc-300'}`}>
+                                        <p className="text-sm leading-relaxed whitespace-pre-wrap">{m.content}</p>
                                         {m.script && (
                                             <button 
                                                 onClick={() => setViewScript(m.script)}
-                                                className="mt-6 w-full py-4 bg-black/40 rounded-xl border border-white/10 flex items-center justify-center gap-3 text-[10px] font-black uppercase tracking-widest hover:border-blue-500 transition-all"
+                                                className="mt-6 w-full py-4 bg-black/40 rounded-xl border border-white/10 flex items-center justify-center gap-3 text-[10px] font-black uppercase tracking-widest hover:border-blue-500 transition-all text-blue-400"
                                             >
-                                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="3"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></svg>
-                                                Visualizar Luau
+                                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></svg>
+                                                Abrir Editor Luau
                                             </button>
                                         )}
                                     </div>
                                 </div>
                             ))}
                             {loading && (
-                                <div className="flex items-center gap-3 text-blue-500 text-[10px] font-black uppercase tracking-widest">
+                                <div className="flex items-center gap-3 text-blue-500 text-[10px] font-black uppercase tracking-widest animate-pulse">
                                     <div className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin"></div>
-                                    A processar pedido...
+                                    Sincronizando com o motor...
                                 </div>
                             )}
                             <div ref={chatEndRef} />
                         </div>
 
                         {/* Input Area */}
-                        <div className="p-10">
+                        <div className="p-10 shrink-0">
                             <form onSubmit={sendMessage} className="max-w-4xl mx-auto relative">
                                 <input 
-                                    className="w-full bg-[#0a0a0a] border border-white/5 rounded-[2rem] px-8 py-7 pr-20 outline-none focus:border-blue-500/50 transition-all text-sm active-input"
-                                    placeholder="Descreve o teu script de Roblox..."
+                                    className="w-full bg-[#0a0a0a] border border-white/5 rounded-[2rem] px-8 py-7 pr-20 outline-none focus:border-blue-500/50 transition-all text-sm active-input disabled:opacity-50"
+                                    placeholder="Descreve o teu script (ex: Sistema de economia)..."
                                     value={input}
                                     onChange={e => setInput(e.target.value)}
                                     disabled={loading}
                                 />
-                                <button className="absolute right-4 top-1/2 -translate-y-1/2 w-14 h-14 bg-blue-600 rounded-2xl flex items-center justify-center text-white hover:bg-blue-500 transition-all shadow-lg shadow-blue-600/20">
+                                <button 
+                                    disabled={loading || !input.trim()}
+                                    className="absolute right-4 top-1/2 -translate-y-1/2 w-14 h-14 bg-blue-600 rounded-2xl flex items-center justify-center text-white hover:bg-blue-500 transition-all shadow-lg shadow-blue-600/20 disabled:opacity-50 disabled:grayscale"
+                                >
                                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M22 2l-7 20-4-9-9-4 20-7z"/><path d="M22 2L11 13"/></svg>
                                 </button>
                             </form>
@@ -216,12 +258,12 @@
 
                     {/* Editor Modal */}
                     {viewScript && (
-                        <div className="fixed inset-0 z-50 bg-black/95 backdrop-blur-xl flex items-center justify-center p-12">
-                            <div className="w-full max-w-5xl h-full glass rounded-[3rem] overflow-hidden flex flex-col border-white/10 shadow-2xl">
+                        <div className="fixed inset-0 z-50 bg-black/95 backdrop-blur-xl flex items-center justify-center p-6 md:p-12">
+                            <div className="w-full max-w-5xl h-full glass rounded-[2.5rem] overflow-hidden flex flex-col border-white/10 shadow-2xl">
                                 <div className="p-8 border-b border-white/5 flex items-center justify-between bg-white/2">
                                     <div>
                                         <h2 className="text-sm font-black uppercase tracking-widest text-white">{viewScript.nome}</h2>
-                                        <p className="text-[10px] font-bold text-blue-500 uppercase mt-1">Local: {viewScript.local}</p>
+                                        <p className="text-[10px] font-bold text-blue-500 uppercase mt-1">Local sugerido: {viewScript.local}</p>
                                     </div>
                                     <div className="flex gap-4">
                                         <button 
@@ -233,17 +275,17 @@
                                                 document.execCommand('copy');
                                                 document.body.removeChild(el);
                                             }}
-                                            className="px-8 py-4 bg-blue-600 rounded-2xl text-[10px] font-black uppercase shadow-lg shadow-blue-600/20 hover:scale-105 transition-transform"
+                                            className="px-6 md:px-8 py-4 bg-blue-600 rounded-2xl text-[10px] font-black uppercase shadow-lg shadow-blue-600/20 hover:scale-105 transition-transform"
                                         >
                                             Copiar Script
                                         </button>
-                                        <button onClick={() => setViewScript(null)} className="p-4 text-zinc-500 hover:text-white">
+                                        <button onClick={() => setViewScript(null)} className="p-4 text-zinc-500 hover:text-white transition-colors">
                                             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M18 6L6 18M6 6l12 12"/></svg>
                                         </button>
                                     </div>
                                 </div>
-                                <div className="flex-1 overflow-auto p-12 bg-black/40 code-area text-blue-100/80 text-sm leading-relaxed">
-                                    <pre><code>{viewScript.codigo}</code></pre>
+                                <div className="flex-1 overflow-auto p-8 md:p-12 bg-black/40 code-area text-blue-100/80 text-xs md:text-sm leading-relaxed no-scrollbar">
+                                    <pre className="whitespace-pre-wrap"><code>{viewScript.codigo}</code></pre>
                                 </div>
                             </div>
                         </div>
